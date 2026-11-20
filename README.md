@@ -35,6 +35,7 @@ GROQ_MODEL=openai/gpt-oss-120b
 ## 3. How to Use
 
 - **Summon / Dismiss**: Press **<kbd>Command + Shift + K</kbd>** (macOS) or **<kbd>Alt + J</kbd>** (Windows / Linux) on any website.
+- **Adjust Opacity**: Press **<kbd>Command</kbd> + <kbd>&gt;</kbd>** to increase opacity, or **<kbd>Command</kbd> + <kbd>&lt;</kbd>** to decrease opacity (Windows / Linux: <kbd>Ctrl</kbd> + <kbd>&gt;</kbd> / <kbd>&lt;</kbd>).
 - **Move**: Click and drag Maeve by the top header bar anywhere across your screen.
 - **Resize**: Click and drag the bottom-right corner handle to resize the width or response height.
 - **Close**: Press <kbd>Esc</kbd> or click the **✕** button.

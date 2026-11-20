@@ -45,7 +45,8 @@
       display: none; /* Hidden until toggled */
       flex-direction: column;
       overflow: hidden;
-      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+      opacity: 0.96;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.15s ease;
       z-index: 2147483647;
     }
 
@@ -245,8 +246,30 @@
     }
   `;
 
+  // Extension validity checker (handles orphaned scripts after extension reload)
+  function isExtensionValid() {
+    return typeof chrome !== "undefined" && Boolean(chrome.runtime && chrome.runtime.id);
+  }
+
+  function safeStorageSet(data) {
+    if (isExtensionValid() && chrome.storage?.local) {
+      try {
+        chrome.storage.local.set(data).catch(() => {});
+      } catch (_) {}
+    }
+  }
+
+  async function safeStorageGet(keys) {
+    if (isExtensionValid() && chrome.storage?.local) {
+      try {
+        return await chrome.storage.local.get(keys);
+      } catch (_) {}
+    }
+    return {};
+  }
+
   // HTML Structure
-  const iconUrl = chrome.runtime.getURL("icons/icon16.png");
+  const iconUrl = (isExtensionValid() && chrome.runtime?.getURL) ? chrome.runtime.getURL("icons/icon16.png") : "";
   const wrapper = document.createElement("div");
   wrapper.innerHTML = `
     <div id="widget">
@@ -258,6 +281,11 @@
           <span>Maeve</span>
         </div>
         <div class="header-actions">
+          <div style="display: flex; align-items: center; gap: 2px; margin-right: 6px; background: rgba(255, 255, 255, 0.05); padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.08);">
+            <button class="icon-btn" id="btn-opacity-down" title="Decrease Opacity (Cmd+<)">−</button>
+            <span id="opacity-badge" style="font-size: 9.5px; color: #cbd5e1; min-width: 26px; text-align: center; font-variant-numeric: tabular-nums;">96%</span>
+            <button class="icon-btn" id="btn-opacity-up" title="Increase Opacity (Cmd+>)">+</button>
+          </div>
           <button class="icon-btn" id="btn-close" title="Close (Esc)">✕</button>
         </div>
       </div>
@@ -296,9 +324,90 @@
   const responseMeta = shadow.getElementById("response-meta");
   const btnClose = shadow.getElementById("btn-close");
   const btnCopy = shadow.getElementById("btn-copy");
+  const opacityBadge = shadow.getElementById("opacity-badge");
+  const btnOpacityDown = shadow.getElementById("btn-opacity-down");
+  const btnOpacityUp = shadow.getElementById("btn-opacity-up");
+
+  // Opacity Controls
+  let currentOpacity = 0.96;
+
+  function updateOpacityUI() {
+    widget.style.setProperty("opacity", currentOpacity.toString(), "important");
+    if (opacityBadge) {
+      opacityBadge.textContent = `${Math.round(currentOpacity * 100)}%`;
+    }
+  }
+
+  function changeOpacity(delta) {
+    currentOpacity = Math.max(0.2, Math.min(1.0, Math.round((currentOpacity + delta) * 10) / 10));
+    updateOpacityUI();
+    safeStorageSet({ maeve_opacity: currentOpacity });
+  }
+
+  // Click listeners for header opacity buttons
+  btnOpacityDown?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    changeOpacity(-0.1);
+  });
+
+  btnOpacityUp?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    changeOpacity(0.1);
+  });
+
+  function handleOpacityKeys(e) {
+    const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+    if (!isCmdOrCtrl) return false;
+
+    const key = e.key;
+    const code = e.code;
+
+    // Increase opacity: Cmd + '>' or Cmd + '.' or Cmd + '+' / '='
+    const isIncrease =
+      key === ">" ||
+      key === "." ||
+      code === "Period" ||
+      key === "+" ||
+      key === "=" ||
+      code === "Equal" ||
+      code === "NumpadAdd";
+
+    // Decrease opacity: Cmd + '<' or Cmd + ',' or Cmd + '-' / '_'
+    const isDecrease =
+      key === "<" ||
+      key === "," ||
+      code === "Comma" ||
+      key === "-" ||
+      key === "_" ||
+      code === "Minus" ||
+      code === "NumpadSubtract";
+
+    if (isIncrease) {
+      e.preventDefault();
+      e.stopPropagation();
+      changeOpacity(0.1);
+      return true;
+    }
+
+    if (isDecrease) {
+      e.preventDefault();
+      e.stopPropagation();
+      changeOpacity(-0.1);
+      return true;
+    }
+
+    return false;
+  }
+
+  // Window-level capture listener: whenever Maeve is visible, handle opacity keys
+  window.addEventListener("keydown", (e) => {
+    if (window.getComputedStyle(widget).display === "none") return;
+    handleOpacityKeys(e);
+  }, true);
 
   // Prevent host webpage shortcuts (e.g. YouTube 'k', Twitter 'j', etc.)
   widget.addEventListener("keydown", (e) => {
+    if (handleOpacityKeys(e)) return;
     e.stopPropagation();
     if (e.key === "Escape") {
       hideWidget();
@@ -355,10 +464,10 @@
     document.removeEventListener("mouseup", onDragEnd);
 
     // Save position
-    chrome.storage.local.set({
+    safeStorageSet({
       maeve_x: widget.style.left,
       maeve_y: widget.style.top
-    }).catch(() => {});
+    });
   }
 
   // Resizing Implementation
@@ -397,15 +506,15 @@
     document.removeEventListener("mousemove", onResizeMove);
     document.removeEventListener("mouseup", onResizeEnd);
 
-    chrome.storage.local.set({
+    safeStorageSet({
       maeve_width: widget.style.width
-    }).catch(() => {});
+    });
   }
 
   // Open & Close Widget Functions
   async function showWidget() {
     try {
-      const saved = await chrome.storage.local.get(["maeve_x", "maeve_y", "maeve_width"]);
+      const saved = await safeStorageGet(["maeve_x", "maeve_y", "maeve_width", "maeve_opacity"]);
       if (saved.maeve_x && saved.maeve_y) {
         widget.style.left = saved.maeve_x;
         widget.style.top = saved.maeve_y;
@@ -415,6 +524,10 @@
       if (saved.maeve_width) {
         widget.style.width = saved.maeve_width;
       }
+      if (saved.maeve_opacity) {
+        currentOpacity = saved.maeve_opacity;
+      }
+      updateOpacityUI();
     } catch (_) {}
 
     widget.style.display = "flex";
@@ -442,6 +555,14 @@
     const text = promptInput.value.trim();
     if (!text) return;
 
+    if (!isExtensionValid() || !chrome?.runtime?.sendMessage) {
+      responseContainer.style.display = "flex";
+      responseContent.textContent = "Maeve was reloaded. Please refresh this webpage (F5 / Cmd+R) to reconnect.";
+      responseContent.style.color = "#f87171";
+      responseMeta.textContent = "Refresh Page";
+      return;
+    }
+
     sendBtn.disabled = true;
     sendBtn.innerHTML = `<span class="spinner"></span>`;
     responseContainer.style.display = "flex";
@@ -449,32 +570,48 @@
     responseContent.style.color = "#9ca3af";
     responseMeta.textContent = "Generating...";
 
-    chrome.runtime.sendMessage(
-      {
-        action: "QUERY_AI",
-        prompt: text
-      },
-      (res) => {
-        sendBtn.disabled = false;
-        sendBtn.innerHTML = "Ask";
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: "QUERY_AI",
+          prompt: text
+        },
+        (res) => {
+          sendBtn.disabled = false;
+          sendBtn.innerHTML = "Ask";
 
-        if (!res) {
-          responseContent.textContent = "Error: Could not reach Maeve background service. Please reload the extension or page.";
-          responseContent.style.color = "#f87171";
-          return;
-        }
+          if (chrome.runtime?.lastError) {
+            responseContent.textContent = "Extension reloaded. Please refresh this page to reconnect.";
+            responseContent.style.color = "#f87171";
+            responseMeta.textContent = "Reconnection needed";
+            return;
+          }
 
-        if (res.success) {
-          responseContent.textContent = res.text;
-          responseContent.style.color = "#f3f4f6";
-          responseMeta.textContent = "Maeve";
-        } else {
-          responseContent.textContent = res.error || "An error occurred.";
-          responseContent.style.color = "#f87171";
-          responseMeta.textContent = "Error";
+          if (!res) {
+            responseContent.textContent = "Error: Could not reach Maeve background service. Please refresh the page.";
+            responseContent.style.color = "#f87171";
+            responseMeta.textContent = "Error";
+            return;
+          }
+
+          if (res.success) {
+            responseContent.textContent = res.text;
+            responseContent.style.color = "#f3f4f6";
+            responseMeta.textContent = "Maeve";
+          } else {
+            responseContent.textContent = res.error || "An error occurred.";
+            responseContent.style.color = "#f87171";
+            responseMeta.textContent = "Error";
+          }
         }
-      }
-    );
+      );
+    } catch (err) {
+      sendBtn.disabled = false;
+      sendBtn.innerHTML = "Ask";
+      responseContent.textContent = "Extension was reloaded. Please refresh this webpage to reconnect Maeve.";
+      responseContent.style.color = "#f87171";
+      responseMeta.textContent = "Refresh Page";
+    }
   }
 
   sendBtn.addEventListener("click", submitPrompt);
